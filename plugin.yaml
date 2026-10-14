@@ -1,5 +1,5 @@
 name: session-mirror
-version: "0.4.0"
+version: "0.4.1"
 description: >-
   Mirrors Hermes Desktop / CLI conversations into Discord: one public thread per session in a
   channel you choose, one post per turn (your message + the reply). Secrets are redacted before
