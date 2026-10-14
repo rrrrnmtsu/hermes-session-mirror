@@ -1,0 +1,41 @@
+name: session-mirror
+version: "0.1.0"
+description: >-
+  Mirrors Hermes Desktop / CLI conversations into Discord: one public thread per session in a
+  channel you choose, one post per turn (your message + the reply). Secrets are redacted before
+  anything leaves the machine. Never blocks a turn: posting runs on a background thread.
+author: rrrrnmtsu
+requires_hermes: ">=0.21"
+provides_hooks:
+  - post_llm_call
+config_schema:
+  enabled:
+    type: bool
+    label: Enable
+    description: Master switch. false = nothing is posted.
+    default: true
+  channel_id:
+    type: str
+    label: Parent channel id
+    description: Text channel that will hold one thread per session. Required.
+    default: ""
+  platforms:
+    type: str
+    label: Mirrored platforms
+    description: Comma-separated session sources to mirror. "discord" is never mirrored (already there).
+    default: "desktop,cli,acp"
+  token_secret:
+    type: str
+    label: Bot token secret name
+    description: Name looked up via agent.secret_scope, then the environment, then the optional token_command.
+    default: "DISCORD_BOT_TOKEN"
+  token_command:
+    type: str
+    label: Token command (optional)
+    description: Command whose stdout is the bot token, used only if the secret/env lookup finds nothing (e.g. a password-manager CLI). Empty = never run.
+    default: ""
+  max_chars:
+    type: int
+    label: Max chars per side
+    description: Each user / assistant body is truncated to this many characters.
+    default: 6000
