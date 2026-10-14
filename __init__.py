@@ -4,9 +4,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
-import shlex
 import sqlite3
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -39,25 +37,21 @@ def _setting(key, default):
 
 
 def _token(name: str):
-    try:
-        from agent import secret_scope
-        v = secret_scope.get_secret(name)
-        if v:
-            return v
-    except Exception:
-        pass
-    v = os.environ.get(name)
-    if v:
-        return v
-    cmd = str(_setting("token_command", "") or "").strip()
-    if cmd:  # opt-in: e.g. a password-manager CLI; never run unless the user configured it
+    """Bot token via Hermes' secret route only. get_secret already falls back to the process
+    environment when profiles are not multiplexed; under multiplexing it raises
+    UnscopedSecretError on purpose, which must propagate (callers skip the turn) rather than be
+    papered over with a bare os.environ read that could leak another profile's token."""
+    from agent import secret_scope
+    return secret_scope.get_secret(name)
+
+
+def _safe_refresh(name: str):
+    def refresh():
         try:
-            r = subprocess.run(shlex.split(cmd), capture_output=True, text=True, timeout=10)
-            if r.returncode == 0 and r.stdout.strip():
-                return r.stdout.strip()
+            return _token(name)
         except Exception:
-            pass
-    return None
+            return None
+    return refresh
 
 
 def _base_redactor():
@@ -138,10 +132,15 @@ def _close_quietly(m):
         logger.debug("session-mirror: closing old mirror failed", exc_info=True)
 
 
+def _is_subagent(title, source) -> bool:
+    """Delegated children must not get their own threads (matches backfill's Subagent: filter)."""
+    return str(source or "").lower() == "subagent" or str(title or "").startswith("Subagent:")
+
+
 def _get_mirror():
     """Return the Mirror, or None while paused/disabled/misconfigured. Re-evaluated every 60 s.
 
-    May block up to token_command's 10 s timeout when (re)building the Mirror."""
+    Cheap: never runs an external command."""
     global _MIRROR, _ACTIVE, _NEXT_CHECK, _WARNED_REASON, _MIRROR_CHANNEL, _MIRROR_KEY
     with _LOCK:
         now = _now()
@@ -159,13 +158,17 @@ def _get_mirror():
         max_chars = _max_chars()
         key = (channel, name, max_chars)
         if _MIRROR is None or key != _MIRROR_KEY:
-            token = _token(name)
+            try:
+                token = _token(name)
+            except Exception as exc:  # incl. UnscopedSecretError: skip this turn, retry later
+                _fail(f"bot token unavailable ({type(exc).__name__})")
+                return None
             if not token:
                 _fail("bot token unavailable")
                 return None
             old = _MIRROR
             _MIRROR = core.Mirror(
-                core.Discord(token, refresh=lambda: _token(name)), channel,
+                core.Discord(token, refresh=_safe_refresh(name)), channel,
                 core.ThreadMap(_hermes_home() / "state" / "session-mirror.json"),
                 max_chars,
             )
@@ -190,7 +193,7 @@ def on_post_llm_call(session_id=None, user_message=None, assistant_response=None
         if not user.strip() and not assistant.strip():
             return None
         title, source = _session_row(session_id)
-        if _is_oneshot(plat, source):
+        if _is_oneshot(plat, source) or _is_subagent(title, source):
             return None
         m = _get_mirror()
         if m is None:
@@ -248,11 +251,15 @@ def _cli_backfill(args):
     mirror = None
     if not args.dry_run:
         name = str(_setting("token_secret", "DISCORD_BOT_TOKEN"))
-        token = _token(name)
+        try:
+            token = _token(name)
+        except Exception as exc:
+            print(f"session-mirror: bot token unavailable ({type(exc).__name__}: {exc})")
+            return 1
         if not token:
             print("session-mirror: bot token unavailable")
             return 1
-        mirror = core.Mirror(core.Discord(token, refresh=lambda: _token(name)), channel, threads, _max_chars())
+        mirror = core.Mirror(core.Discord(token, refresh=_safe_refresh(name)), channel, threads, _max_chars())
     stats = backfill.run(sessions, mirror, threads, _base_redactor(), args.dry_run)
     if mirror is not None:
         mirror.close(10.0)

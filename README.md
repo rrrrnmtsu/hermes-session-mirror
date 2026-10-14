@@ -10,7 +10,7 @@ hermes config set plugins.entries.session-mirror.settings.channel_id <CHANNEL_ID
 hermes plugins enable session-mirror
 ```
 The bot needs *Send Messages* + *Create Public Threads* in that channel. Token lookup order:
-`agent.secret_scope` → environment (name = `token_secret`, default `DISCORD_BOT_TOKEN`) → optional `token_command` (a command printing the token, e.g. your password-manager CLI; empty = never run).
+`agent.secret_scope.get_secret(token_secret)` only (default name `DISCORD_BOT_TOKEN`). It reads the process environment when profiles are not multiplexed; with several profiles in one process it raises on purpose and the turn is skipped. Password-manager users inject the token into the environment (e.g. `op run -- hermes ...`).
 
 ## Settings (`plugins.entries.session-mirror.settings`)
 | key | default | meaning |
@@ -20,7 +20,6 @@ The bot needs *Send Messages* + *Create Public Threads* in that channel. Token l
 | `channel_id` | – | parent channel (required; int or string accepted) |
 | `platforms` | `desktop,cli,acp,tui` | platforms to mirror, case-insensitive (`discord` is never mirrored) |
 | `token_secret` | `DISCORD_BOT_TOKEN` | secret/env name for the bot token |
-| `token_command` | – | optional command printing the token (fallback) |
 | `max_chars` | `6000` | per-side truncation; `0` or negative = unlimited |
 
 Quick stop / resume (no restart, picked up within 60 s):
@@ -74,10 +73,11 @@ neutralised, so mirrored text cannot ping anyone.
   in `discord.allowed_channels`.
 
 ## Latency
-The hook is non-blocking apart from (re)building the Mirror, at most once per 60 s: a configured
-`token_command` can block up to 10 s (the Hermes hook timeout is 30 s). Posting itself is on a background
-thread. When `channel_id`, `token_secret` or `max_chars` changes, a new Mirror is built and the old one
+The hook never spawns a process. It does a read-only `state.db` lookup (title/source, 1 s timeout) per turn;
+posting itself is on a background thread. When `channel_id`, `token_secret` or `max_chars` changes, a new Mirror is built and the old one
 is closed (flushed, worker stopped).
+
+Delegated `Subagent:` sessions are never mirrored (live hook and backfill alike).
 
 ## Backfill existing sessions
 ```bash

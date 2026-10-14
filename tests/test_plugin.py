@@ -1,6 +1,7 @@
 import atexit
 import importlib.util
 import sqlite3
+import os
 import sys
 import tempfile
 import unittest
@@ -226,6 +227,16 @@ class Tests(Base):
             h("s", "a", "b", "cli")
         self.assertEqual(len(self.submits()), 1)
 
+    def test_subagent_sessions_are_not_mirrored_live(self):
+        h = self.reg()
+        for row in (("Subagent: audit the repo", "desktop"), (None, "subagent")):
+            with mock.patch.object(plug, "_session_row", lambda s, row=row: row):
+                h("s", "a", "b", "desktop")
+        self.assertEqual(self.submits(), [])
+        with mock.patch.object(plug, "_session_row", lambda s: ("Plan", "desktop")):
+            h("s", "a", "b", "desktop")
+        self.assertEqual(len(self.submits()), 1)
+
     def test_is_oneshot_uses_session_source_signal(self):
         real = mock.Mock(__name__="x")
         for ret, want in (("oneshot", True), ("cli", False)):
@@ -406,6 +417,52 @@ class Integration(unittest.TestCase):
         if plug._MIRROR is not None:
             self.flush()
         self.assertEqual(self.fd.posts, [])
+
+
+class TokenRoute(unittest.TestCase):
+    """Reviewer requirement: the token comes only from agent.secret_scope.get_secret."""
+
+    def _with_scope(self, fn):
+        import types
+        scope = types.ModuleType("agent.secret_scope")
+        scope.get_secret = fn
+        agent = types.ModuleType("agent")
+        agent.secret_scope = scope
+        return mock.patch.dict(sys.modules, {"agent": agent, "agent.secret_scope": scope})
+
+    def test_token_is_get_secret_value(self):
+        with self._with_scope(lambda n: "from-scope-" + n):
+            self.assertEqual(plug._token("X"), "from-scope-X")
+
+    def test_unscoped_error_propagates_and_env_is_never_consulted(self):
+        class UnscopedSecretError(RuntimeError):
+            pass
+
+        def boom(n):
+            raise UnscopedSecretError("multiplexed")
+        with self._with_scope(boom), mock.patch.dict(os.environ, {"X": "leak"}):
+            with self.assertRaises(UnscopedSecretError):
+                plug._token("X")
+
+    def test_refresh_swallows_scope_errors_and_returns_none(self):
+        with mock.patch.object(plug, "_token", side_effect=RuntimeError("x")):
+            self.assertIsNone(plug._safe_refresh("X")())
+
+    def test_no_token_command_setting_or_subprocess_left(self):
+        src = (Path(plug.__file__).parent / "__init__.py").read_text()
+        self.assertNotIn("token_command", src)
+        self.assertNotIn("subprocess", src)
+        self.assertNotIn("os.environ.get(name)", src)
+
+
+class UnscopedTurnSkipped(Base):
+    def test_unscoped_secret_skips_turn_without_raising(self):
+        def boom(n):
+            raise RuntimeError("UnscopedSecretError")
+        h = self.reg()
+        with mock.patch.object(plug, "_token", boom):
+            h("s", "a", "b", "desktop")
+        self.assertEqual(self.submits(), [])
 
 
 if __name__ == "__main__":

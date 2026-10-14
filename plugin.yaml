@@ -1,5 +1,5 @@
 name: session-mirror
-version: "0.4.1"
+version: "0.5.0"
 description: >-
   Mirrors Hermes Desktop / CLI conversations into Discord: one public thread per session in a
   channel you choose, one post per turn (your message + the reply). Secrets are redacted before
@@ -32,13 +32,8 @@ config_schema:
   token_secret:
     type: str
     label: Bot token secret name
-    description: Name looked up via agent.secret_scope, then the environment, then the optional token_command.
+    description: Name looked up via agent.secret_scope, which falls back to the process environment when profiles are not multiplexed.
     default: "DISCORD_BOT_TOKEN"
-  token_command:
-    type: str
-    label: Token command (optional)
-    description: Command whose stdout is the bot token, used only if the secret/env lookup finds nothing (e.g. a password-manager CLI). Empty = never run.
-    default: ""
   max_chars:
     type: int
     label: Max chars per side
