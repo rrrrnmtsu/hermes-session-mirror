@@ -1,5 +1,5 @@
 name: session-mirror
-version: "0.1.0"
+version: "0.3.0"
 description: >-
   Mirrors Hermes Desktop / CLI conversations into Discord: one public thread per session in a
   channel you choose, one post per turn (your message + the reply). Secrets are redacted before
@@ -17,13 +17,18 @@ config_schema:
   channel_id:
     type: str
     label: Parent channel id
-    description: Text channel that will hold one thread per session. Required.
+    description: Text channel that will hold one thread per session. Required. Numeric YAML values are fine (coerced to string); the "should be str (got int)" warning is harmless.
     default: ""
+  paused:
+    type: bool
+    label: Pause
+    description: true = stop posting (re-read every 60 s, no restart needed).
+    default: false
   platforms:
     type: str
     label: Mirrored platforms
-    description: Comma-separated session sources to mirror. "discord" is never mirrored (already there).
-    default: "desktop,cli,acp"
+    description: Comma-separated platforms to mirror (case-insensitive). "discord" is never mirrored; one-shot runs (hermes -z / chat -q) are always skipped.
+    default: "desktop,cli,acp,tui"
   token_secret:
     type: str
     label: Bot token secret name
@@ -37,5 +42,5 @@ config_schema:
   max_chars:
     type: int
     label: Max chars per side
-    description: Each user / assistant body is truncated to this many characters.
+    description: Each user / assistant body is truncated to this many characters. 0 or negative = unlimited.
     default: 6000
