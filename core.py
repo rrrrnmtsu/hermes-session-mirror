@@ -161,8 +161,11 @@ def thread_name(first_message: str) -> str:
     if not first_message or not first_message.strip():
         return FALLBACK_NAME
     if not is_system_text(first_message):
-        line = next(l.strip() for l in first_message.splitlines() if l.strip())
-        return _clean_name(line)
+        lines = [l.strip() for l in first_message.splitlines() if l.strip()]
+        real = [l for l in lines if not _ATTACH_LINE.match(l)]
+        if not real:
+            return FALLBACK_NAME
+        return _clean_name(real[0])
     # Injected text: use the first paragraph that is not itself system text, if any.
     for para in re.split(r"\n\s*\n", first_message):
         if para.strip() and not is_system_text(para):
@@ -174,6 +177,15 @@ def thread_name_for(title: Optional[str], first_message: str) -> str:
     if not is_generic_title(title):
         return _clean_name(title or "")
     return thread_name(first_message)
+
+
+_USAGE_RE = re.compile(r"\n*<details\s*>\s*<summary\s*>[^<]*\U0001F4CA[^<]*(?:用量|usage).*\Z", re.S | re.I)
+_ATTACH_LINE = re.compile(r"^\s*(?:@file:|@image:|@url:)\S*\s*$")
+
+
+def strip_usage_footer(text: str) -> str:
+    """Drop the turn-usage plugin's trailing <details> block; it is cost telemetry, not conversation."""
+    return _USAGE_RE.sub("", text or "").rstrip()
 
 
 def _defang(text: str) -> str:
@@ -188,6 +200,7 @@ def render_turn(user: str, assistant: str, max_chars: int) -> list[str]:
         pieces = chunk(clip(_defang(user), max_chars), CHUNK - len(header) - 1)
         parts.append(header + "\n" + pieces[0])
         parts.extend(pieces[1:])
+    assistant = strip_usage_footer(assistant)
     if assistant and assistant.strip():
         header = "**🤖 Hermes**"
         pieces = chunk(clip(_defang(assistant), max_chars), CHUNK - len(header) - 1)

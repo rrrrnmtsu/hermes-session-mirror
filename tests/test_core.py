@@ -880,5 +880,29 @@ class MirrorClose(unittest.TestCase):
 
 
 
+
+class UsageFooterAndAttachmentNames(unittest.TestCase):
+    FOOTER = "answer\n\n<details><summary>\U0001F4CAusage $0.001</summary>\n\n| a | b |\n\n</details>"
+
+    def test_usage_footer_is_not_mirrored(self):
+        out = "\n".join(core.render_turn("q", self.FOOTER, 6000))
+        self.assertIn("answer", out)
+        self.assertNotIn("usage", out)
+        self.assertNotIn("<details", out)
+
+    def test_footer_only_assistant_text_posts_no_assistant_part(self):
+        parts = core.render_turn("q", "<details><summary>\U0001F4CAusage</summary>x</details>", 6000)
+        self.assertEqual(len(parts), 1)
+
+    def test_text_without_footer_is_untouched(self):
+        self.assertEqual(core.strip_usage_footer("plain <details>x</details>"), "plain <details>x</details>")
+
+    def test_attachment_only_first_line_falls_back_to_generic_name(self):
+        self.assertEqual(core.thread_name("@file:.hermes/composer-pastes/pasted_1.txt"), core.FALLBACK_NAME)
+
+    def test_attachment_line_is_skipped_for_thread_name(self):
+        self.assertEqual(core.thread_name("@file:x/y.txt\nreal question"), "real question")
+
+
 if __name__ == "__main__":
     unittest.main()
