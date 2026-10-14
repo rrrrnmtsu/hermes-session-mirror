@@ -78,3 +78,14 @@ The hook is non-blocking apart from (re)building the Mirror, at most once per 60
 `token_command` can block up to 10 s (the Hermes hook timeout is 30 s). Posting itself is on a background
 thread. When `channel_id`, `token_secret` or `max_chars` changes, a new Mirror is built and the old one
 is closed (flushed, worker stopped).
+
+## Backfill existing sessions
+```bash
+hermes session-mirror backfill --dry-run            # list what would be mirrored
+hermes session-mirror backfill                       # sessions from the `platforms` setting
+hermes session-mirror backfill --last 5 --include-archived --session <id> --sources desktop
+```
+Reads `$HERMES_HOME/state.db` **read-only**, replays user/assistant text (no tool rows) through the same
+fail-closed redaction and usage-footer stripping as the live hook, one thread per session. Sessions already
+in the thread map are skipped, so re-running never duplicates. `Subagent:` sessions and archived/hidden
+sessions are excluded unless `--include-archived`.

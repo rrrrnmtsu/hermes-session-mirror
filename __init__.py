@@ -222,7 +222,49 @@ def _flush_at_exit():
 atexit.register(_flush_at_exit)
 
 
+def _cli_setup(parser):
+    parser.add_argument("action", choices=["backfill"], help="backfill: replay existing sessions into Discord")
+    parser.add_argument("--sources", default=None, help="comma list of session sources (default: the `platforms` setting)")
+    parser.add_argument("--include-archived", action="store_true", help="also mirror archived/hidden sessions")
+    parser.add_argument("--session", default=None, help="only this session id")
+    parser.add_argument("--last", type=int, default=None, help="only the N most recent sessions")
+    parser.add_argument("--dry-run", action="store_true", help="list what would be mirrored; post nothing")
+
+
+def _cli_backfill(args):
+    try:
+        from . import backfill
+    except ImportError:  # pragma: no cover
+        import backfill  # type: ignore
+    channel = str(_setting("channel_id", "") or "").strip()
+    if not channel:
+        print("session-mirror: set channel_id first (hermes config set plugins.entries.session-mirror.settings.channel_id <id>)")
+        return 1
+    sources = (args.sources or str(_setting("platforms", DEFAULT_PLATFORMS))).split(",")
+    sources = [s for s in sources if s.strip().lower() != "discord"]
+    sessions = backfill.select_sessions(_hermes_home() / "state.db", sources, args.include_archived,
+                                        args.session, args.last)
+    threads = core.ThreadMap(_hermes_home() / "state" / "session-mirror.json")
+    mirror = None
+    if not args.dry_run:
+        name = str(_setting("token_secret", "DISCORD_BOT_TOKEN"))
+        token = _token(name)
+        if not token:
+            print("session-mirror: bot token unavailable")
+            return 1
+        mirror = core.Mirror(core.Discord(token, refresh=lambda: _token(name)), channel, threads, _max_chars())
+    stats = backfill.run(sessions, mirror, threads, _base_redactor(), args.dry_run)
+    if mirror is not None:
+        mirror.close(10.0)
+    print(f"done: {stats}")
+    return 0
+
+
 def register(ctx):
     global _CTX
     _CTX = ctx
     ctx.register_hook("post_llm_call", on_post_llm_call)
+    try:
+        ctx.register_cli_command("session-mirror", "Mirror existing sessions into Discord", _cli_setup, _cli_backfill)
+    except Exception:  # older Hermes without CLI registration: the hook still works
+        logger.debug("session-mirror: CLI command not registered", exc_info=True)
