@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -75,6 +76,23 @@ def select_sessions(db_path: Path, sources: Iterable[str], include_archived: boo
         con.close()
 
 
+_sleep = time.sleep
+
+
+def _send_with_retry(mirror, sid, user, assistant, title, log, attempts: int = 3) -> bool:
+    """A long backfill must survive a network blip; POSTs are deliberately not retried inside core
+    (a lost response could duplicate), so retry whole turns here and accept the rare duplicate."""
+    for i in range(attempts):
+        try:
+            mirror.send(sid, user, assistant, title=title)
+            return True
+        except Exception as e:  # noqa: BLE001 - report and keep going
+            log(f"  send failed ({sid}, attempt {i + 1}/{attempts}): {e}")
+            if i + 1 < attempts:
+                _sleep(5 * (i + 1))
+    return False
+
+
 def run(sessions: list, mirror, threads, redact_base: Optional[Callable[[str], str]],
         dry_run: bool = False, log: Callable[[str], None] = print) -> dict:
     """Send every not-yet-mirrored session. Redaction is fail-closed, same as the live hook."""
@@ -95,7 +113,9 @@ def run(sessions: list, mirror, threads, redact_base: Optional[Callable[[str], s
             a = core.redact(assistant, redact_base, True)
             if core.is_unavailable(u) and core.is_unavailable(a):
                 continue
-            mirror.send(sid, u, a, title=safe_title)
+            if not _send_with_retry(mirror, sid, u, a, safe_title, log):
+                stats["failed"] = stats.get("failed", 0) + 1
+                break  # the rest of this session would land out of order; move to the next session
             stats["turns"] += 1
         stats["sessions"] += 1
     return stats

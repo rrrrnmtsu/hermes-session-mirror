@@ -108,5 +108,37 @@ class Run(unittest.TestCase):
         self.assertEqual(m.sent, [])
 
 
+
+class Resilience(unittest.TestCase):
+    def setUp(self):
+        backfill._sleep = lambda _s: None
+
+    def test_transient_failure_is_retried_and_turn_delivered(self):
+        calls = {"n": 0}
+
+        class Flaky(FakeMirror):
+            def send(self, *a, **k):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise RuntimeError("net down")
+                super().send(*a, **k)
+        m = Flaky()
+        st = backfill.run([("s1", "t", [("q", "a")])], m, FakeThreads(), lambda t: t, log=lambda _: None)
+        self.assertEqual(len(m.sent), 1)
+        self.assertNotIn("failed", st)
+
+    def test_persistent_failure_skips_to_next_session_instead_of_aborting(self):
+        class Bad(FakeMirror):
+            def send(self, sid, *a, **k):
+                if sid == "s1":
+                    raise RuntimeError("down")
+                super().send(sid, *a, **k)
+        m = Bad()
+        st = backfill.run([("s1", "t", [("q", "a")]), ("s2", "t", [("q", "a")])], m, FakeThreads(),
+                          lambda t: t, log=lambda _: None)
+        self.assertEqual([x[0] for x in m.sent], ["s2"])
+        self.assertEqual(st["failed"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
